@@ -36,6 +36,69 @@
         </configuration>
       </plugin>
 
+      <!-- Add these test dependencies -->
+      <plugin>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <version>2.22.2</version>
+      </plugin>
+
+      <plugin>
+        <artifactId>maven-failsafe-plugin</artifactId>
+        <version>2.22.2</version>
+      </plugin>
+
+      <!-- The rest of your existing plugins -->
+
+    </plugins>
+  </build>
+
+  <dependencies>
+    <!-- ... (your existing dependencies) -->
+
+    <!-- Add these test dependencies -->
+    <dependency>
+      <groupId>junit</groupId>
+      <artifactId>junit</artifactId>
+      <version>4.10</version>
+      <scope>test</scope>
+    </dependency>
+
+    <dependency>
+      <groupId>org.mockito</groupId>
+      <artifactId>mockito-core</artifactId>
+      <version>1.8.5</version>
+      <scope>test</scope>
+    </dependency>
+
+    <dependency>
+      <groupId>org.hamcrest</groupId>
+      <artifactId>hamcrest-core</artifactId>
+      <version>1.3</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <distributionManagement>
+    <site>
+      <id>site-server</id>
+      <name>Test Project Site</name>
+      <url>file:///tmp/single-module-site</url>
+    </site>
+  </distributionManagement>
+
+  <build>
+    <finalName>${project.artifactId}</finalName>
+
+    <plugins>
+      <plugin>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.8.1</version> <!-- Updated to a newer version -->
+        <configuration>
+          <source>1.8</source> <!-- Updated to Java 8 source compatibility level -->
+          <target>1.8</target> <!-- Updated to Java 8 target compatibility level -->
+        </configuration>
+      </plugin>
+
       <plugin>  
         <!-- Build an executable JAR -->  
         <groupId>org.apache.maven.plugins</groupId>  
