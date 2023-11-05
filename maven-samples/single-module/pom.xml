@@ -1,5 +1,5 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+  xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
 
   <modelVersion>4.0.0</modelVersion>
 
@@ -30,13 +30,34 @@
     <plugins>
       <plugin>
         <artifactId>maven-compiler-plugin</artifactId>
-        <version>3.8.1</version> <!-- Updated to a newer version -->
+        <version>3.8.1</version>
         <configuration>
-          <source>1.8</source> <!-- Updated to Java 8 source compatibility level -->
-          <target>1.8</target> <!-- Updated to Java 8 target compatibility level -->
+          <source>1.8</source>
+          <target>1.8</target>
         </configuration>
       </plugin>
 
+      <!-- Add the Maven Assembly Plugin configuration here -->
+      <plugin>
+        <artifactId>maven-assembly-plugin</artifactId>
+        <version>3.3.0</version>
+        <configuration>
+          <descriptorRefs>
+            <descriptorRef>jar-with-dependencies</descriptorRef>
+          </descriptorRefs>
+          <appendAssemblyId>false>
+        </configuration>
+        <executions>
+          <execution>
+            <id>make-assembly</id>
+            <phase>package</phase>
+            <goals>
+              <goal>single</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+      
       <!-- The rest of your existing plugins -->
 
     </plugins>
@@ -47,5 +68,4 @@
   <prerequisites>
     <maven>3.0.3</maven>
   </prerequisites>
-
 </project>
