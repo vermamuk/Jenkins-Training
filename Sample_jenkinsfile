@@ -1,47 +1,569 @@
 pipeline {
-    agent any
-
+    agent {
+        kubernetes {
+            cloud 'kit-api-cicd1'
+            yaml '''
+        apiversion: v1
+        kind: Pod
+        spec:
+          imagePullSecrets:
+            - name: artifactory
+          containers:
+          - name: jnlp
+            image: registry.redhat.io/openshift4/ose-jenkins-agent-maven:v4.5.0
+            tty: true
+            workingDir: /home/jenkins
+            env:
+              - name: JAVA_TOOL_OPTIONS
+                value: "-Duser.home=/home/jenkins"
+              - name: MAVEN_CONFIG
+                value: "/home/jenkins/.m2"
+              - name: HTTP_PROXY
+                valueFrom:
+                  configMapKeyRef:
+                    name: proxy-config
+                    key: HTTP_PROXY
+              - name: HTTPS_PROXY
+                valueFrom:
+                  configMapKeyRef:
+                    name: proxy-config
+                    key: HTTPS_PROXY
+              - name: NO_PROXY
+                valueFrom:
+                  configMapKeyRef:
+                    name: proxy-config
+                    key: NO_PROXY
+            envFrom:
+              - configMapRef:
+                  name: proxy-config
+            resources:
+              limits:
+                cpu: 800m
+                memory: 500Mi
+              requests:
+                cpu: 100m
+                memory: 200Mi
+          - name: occlient
+            image: registry.redhat.io/openshift4/ose-cli:v4.13.0
+            command:
+            - cat
+            tty: true
+            workingDir: /home/jenkins
+          - name: helm
+            image: lty-docker-snapshot-local.docker.abc.dev/base-images/ubi8-minimal-helm:3.6.3-1
+            command:
+            - cat
+            tty: true
+            workingDir: /home/jenkins
+          - name: maven
+            image: lty-docker-snapshot-local.docker.abc.dev/base-images/maven-3.9.3:jdk17
+            command:
+            - cat
+            tty: true
+            volumeMounts:
+              - name: m2-secret
+                mountPath: "/home/jenkins/.m2"
+            workingDir: /home/jenkins
+            env:
+              - name: JAVA_TOOL_OPTIONS
+                value: "-Duser.home=/home/jenkins"
+              - name: MAVEN_CONFIG
+                value: "/home/jenkins/.m2"
+              - name: HTTP_PROXY
+                valueFrom:
+                  configMapKeyRef:
+                    name: proxy-config
+                    key: HTTP_PROXY
+              - name: HTTPS_PROXY
+                valueFrom:
+                  configMapKeyRef:
+                    name: proxy-config
+                    key: HTTPS_PROXY
+              - name: NO_PROXY
+                valueFrom:
+                  configMapKeyRef:
+                    name: proxy-config
+                    key: NO_PROXY
+            envFrom:
+              - configMapRef:
+                  name: proxy-config
+            resources:
+              limits:
+                cpu: 800m
+                memory: 900Mi
+              requests:
+                cpu: 200m
+                memory: 900Mi
+          volumes:
+            - name: m2-secret
+              secret:
+                secretName: maven-settings
+         '''
+        }
+    }
     environment {
-        // Define environment variables here
-        MY_ENV_VAR = 'Custom Value'
+        branchName = "${env.BRANCH_NAME}"
+        label = "pod-${UUID.randomUUID().toString()}"
     }
-    
-
+    parameters{
+        booleanParam(defaultValue: false, description: 'Run Black Duck Scan', name: 'isBlackDuckScan')
+        booleanParam(defaultValue: false, description: 'Run Checkmarx Scan', name: 'isCheckmarxScan')
+        booleanParam(defaultValue: false, description: 'Run Sonar Scan', name: 'isSonarScan')
+    }    
+    options {
+        timestamps()
+        timeout (time: 60, unit: 'MINUTES')
+    }
     stages {
-
-        stage('Build') {
+        stage('Start Declarative Pipeline') {
             steps {
-                // Build your application here (e.g., compile, package, etc.)
-                sh '''
-                ls
-                echo "In Build Step"
-                '''
+                script {
+                    echo "Pipeline Started"
+                    mybranch = "${branchName}"
+                        try{
+                        branchType = mybranch.split('/')[0]
+                        echo"branchType: ${branchType}"
+                        }
+                        catch (Exception e) {
+                        branchType = 'develop'
+                        echo"branchType: ${branchType}"
+                        }
+                    def pom = readMavenPom file: 'pom.xml'
+                    versionNumber = pom.version
+                    //Variables from params.yaml in developer's repo
+                    def datas = readYaml file: "./params.yaml"
+                    component = datas.build.component
+                    dockerbuildinput = datas.stages.dockerbuild
+                    sonarscaninput = datas.stages.sonar
+                    blackduckscaninput = datas.stages.blackduck
+                    checkmarxscaninput = datas.stages.checkmarx
+                    helm = datas.stages.helm
+                    //blackduck variables
+                    BlackDuckUrl = pipelineConfig.buildParams.blackduck.url
+                    BlackDuckProjectName = datas.blackduck.project_name
+                    BlackDuckCreds = datas.blackduck.credID
+                    blackduckProjectVersion = ""
+                    BlackduckDevelopProjectVersion = datas.blackduck.develop_projectversion
+                    BlackduckSource = datas.blackduck.source
+                    //checkmarx varaibles
+                    CheckmarxGroupId = datas.checkmarx.groupId
+                    CheckmarxProjectName = datas.checkmarx.projectName
+                    //sonar variables
+                    SonarProjectkey = datas.sonar.project_key
+                    SonarProjectName = datas.sonar.project_name
+                    SonarProjectLogin = pipelineConfig.buildParams.sonar.project_login
+                    SonarQubeCreds = pipelineConfig.buildParams.sonar.credentials
+                    SonarUrl = pipelineConfig.buildParams.sonar.url
+                    SonarBranchName = pipelineConfig.buildParams.sonar.branch_name
+                    SonarSource = pipelineConfig.buildParams.sonar.source
+                    Sonarexclusions = pipelineConfig.buildParams.sonar.exclusions
+                    //sysdig variables
+                    SysdigUrl = pipelineConfig.buildParams.sysdig.url
+                    SysdigCreds = pipelineConfig.buildParams.sysdig.credentials
+                    //Varaibles from ocpBuildParameters.yml from shared library
+                    notificationEmail = pipelineConfig.buildParams.vars.email
+                    namespace = pipelineConfig.buildParams.ocp.namespace
+                    ocUrl = pipelineConfig.buildParams.ocp.url
+                    ocCreds = pipelineConfig.buildParams.ocp.credentials
+ 
+                    workingdir = pipelineConfig.buildParams.workingdir
+                    artifacttype = '**/**.' + pipelineConfig.buildParams.artifacttype
+                    Bitbucket_id = pipelineConfig.buildParams.vars.bitbucket_id
+ 
+                    //Harness Varaibles
+                    if ( env.BRANCH_NAME == "develop"){
+                        pipelineIdentifier = datas.harness.dev_pipelineIdentifier
+                        triggerIdentifier = datas.harness.dev_triggerIdentifier
+                    }
+                    else if ( env.BRANCH_NAME.startsWith("release/")){
+                        pipelineIdentifier = datas.harness.release_pipelineIdentifier
+                        triggerIdentifier = datas.harness.release_triggerIdentifier
+                    }
+ 
+                    if(versionNumber.contains('-SNAPSHOT')){
+                        docker_versionNumber = versionNumber.replaceAll("-SNAPSHOT","-latest")
+                    }
+                    else{
+                        docker_versionNumber = versionNumber
+                    }
+                    if ( env.BRANCH_NAME == "develop" || env.BRANCH_NAME.startsWith("bugfix/") || env.BRANCH_NAME.startsWith("hotfix/") || env.BRANCH_NAME.startsWith("release/")) {
+                        artHelmRepo = "https://artifactory.abc.dev/artifactory/lty-helm-snapshot-local"
+                        artRepo = "lty-docker-snapshot-local.docker.abc.dev"
+                    }
+ 
+                    if ( branchName.startsWith("feature") || branchName.startsWith("PR")) {
+                      println "Pre check completed"
+                    }
+                    else if((branchName.startsWith("develop")  || branchName.startsWith("release")) ){
+                        isBlackDuckScan = true
+                        isCheckmarxScan = true
+                        isSonarScan = true
+                    }
+                    else {
+                        isBlackDuckScan = false
+                        isCheckmarxScan = false
+                        isSonarScan = false
+                        currentBuild.result = 'FAILURE'
+                        // error("Pre check failed")
+                    }
+                    dir("${env.WORKSPACE}"){
+                    sourcePath = "${env.WORKSPACE}"
+                    destinationPath = "${env.WORKSPACE}/checkmarx_testing"
+                    sh """
+                    mkdir '$destinationPath'
+                    cp -rf '$sourcePath' /tmp/checkmarx_testing
+                    cp -rf /tmp/checkmarx_testing $env.WORKSPACE
+                    ls "${destinationPath}/"
+                    """
+                    }
+                }
             }
         }
-
-        stage('Test') {
-            steps {
-                // Run your tests (e.g., unit tests, integration tests)
-                sh 'echo "In Test Step"'
+ 
+        // stage('Set-Stages-for-Scans') {
+        //     steps {
+        //         script {
+        //             if ("${blackduckscaninput}" == "true" || "${isBlackDuckScan}" == "true") { blackDuckScan = true } else { blackDuckScan = false }
+        //             if ("${checkmarxscaninput}" == "true" || "${isCheckmarxScan}" == "true") { checkmarxScan = true } else { checkmarxScan = false }
+        //             if ("${sonarscaninput}" == "true" || "${isSonarScan}" == "true") { sonarScan = true } else { sonarScan = false }
+        //                 echo blackDuckScan.toString()
+        //                 echo checkmarxScan.toString()
+        //                 echo sonarScan.toString()
+        //         }
+        //     }
+        // }
+ 
+        stage('Maven Build') {
+            steps{
+                container("maven"){
+                    script {
+                        echo "Maven Build Started"
+                            if (env.BRANCH_NAME == "develop" || branchName.startsWith("OCP") || branchName.startsWith("feature")){
+                                sh "mvn -V -B -f pom.xml clean install -Dmaven.test.skip=true"
+                            }
+                            //Archiving the artifact for testing the jar.
+                            archiveArtifacts allowEmptyArchive: true, artifacts: "${component}-app/target/*.jar"
+                        }
+                    }
+                }
+                post {
+                success{
+                    script {
+                        currentBuild.description = "Built Version : ${versionNumber}"
+                    }
+                }
+                failure {
+                    script{
+                        println "Build Failed !! Please review Build Logs"
+                    }
+                }
             }
         }
-
-        stage('Deploy') {
-            steps {
-                // Deploy your application to a target environment (e.g., staging, production)
-                sh 'echo "Value of ENV Varaible is "$MY_ENV_VAR""'
+ 
+      /*  stage('Copy Chart to config folder') {
+            when {
+                allOf{
+                    anyOf {
+                        branch 'develop';
+                        branch 'release/*';
+                        }
+                    expression {helm == true}
+                }
             }
+            steps{
+                container('helm') {
+                    script {
+                        // Update deployment chart's values.yaml
+                        if (env.BRANCH_NAME == "develop"){
+                        Map valuesYaml = readYaml file: 'charts/values.yaml'
+                        valuesYaml['deployment']['image']['tag'] = "${docker_versionNumber}"
+                        echo"docker_versionNumber: ${docker_versionNumber}"
+ 
+                        sh "rm -rf charts/values.yaml"
+                        writeYaml file: "charts/values.yaml", data: valuesYaml
+ 
+                        Map chartYaml = readYaml file: 'charts/Chart.yaml'
+                        chartYaml['name'] = "${component}-${branchType}"
+                        chartYaml['version'] = "${versionNumber}"
+ 
+                        sh "rm -rf charts/Chart.yaml"
+                        writeYaml file: "charts/Chart.yaml", data: chartYaml
+                        }
+                        else if (branchName.startsWith("release")){
+                        Map valuesYaml = readYaml file: 'charts/values-qa.yaml'
+                        valuesYaml['deployment']['image']['tag'] = "${docker_versionNumber}"
+                        echo"docker_versionNumber: ${docker_versionNumber}"
+ 
+                        sh "rm -rf charts/values-qa.yaml"
+                        writeYaml file: "charts/values-qa.yaml", data: valuesYaml
+ 
+                        Map valuesYaml = readYaml file: 'charts/values-uat.yaml'
+                        valuesYaml['deployment']['image']['tag'] = "${docker_versionNumber}"
+                        echo"docker_versionNumber: ${docker_versionNumber}"
+ 
+                        sh "rm -rf charts/values-uat.yaml"
+                        writeYaml file: "charts/values-uat.yaml", data: valuesYaml
+                       
+                        Map chartYaml = readYaml file: 'charts/Chart.yaml'
+                        chartYaml['name'] = "${component}-${branchType}"
+                        chartYaml['version'] = "${versionNumber}"
+ 
+                        sh "rm -rf charts/Chart.yaml"
+                        writeYaml file: "charts/Chart.yaml", data: chartYaml
+                        }
+ 
+                        srcDir = "${component}-app/src/main/resources"
+                        destDir = "charts"
+ 
+                        // Copy config files to helm chart
+                        sh """
+                        cp ${srcDir}/*.yml ${destDir}/config
+                        """
+                    }
+                }
+            }
+        }*/
+ 
+       /* stage('Helm Debug') {
+            when {
+                allOf{
+                    anyOf {
+                        branch 'develop';
+                        branch 'release/*';
+                        }
+                    expression {helm == true}
+                }
+            }
+            steps{
+                container('helm') {
+                    script {
+                        echo "Helm Debug Started"
+                        // Lint deployment chart
+                        if (env.BRANCH_NAME == "develop"){
+                        sh """
+                        helm dependency update "charts"
+                        helm template "charts"
+                        """
+                        }
+                        else if ((branchName.startsWith("release"))){
+                            sh """
+                            helm dependency update "charts"
+                            helm template "charts" -f 'charts/values-qa.yaml'
+                            """
+                        }
+                    }
+                }
+            }
+        }*/
+ 
+     /*   stage('Scanning Stages') { // Stage to run Blackduck,Sonar and checkmarx scans in parallel
+            parallel {
+                stage('Blackduck'){
+                    when { expression {blackDuckScan == true}  }
+                    steps {
+                        container('maven') {
+                            script {
+                                echo "Blackduck Scan Started"
+                                if( env.BRANCH_NAME == "develop" ) { //master
+                                    blackduckProjectVersion = "${BlackduckDevelopProjectVersion}"
+                                    echo "blackduckProjectVersion_develop: ${blackduckProjectVersion}"
+                                }
+                                else if( env.BRANCH_NAME.startsWith("release")) {
+                                    blackduckprojectversion = env.BRANCH_NAME.replace("/","_")
+                                    echo "blackduckprojectversion: ${blackduckprojectversion}"
+                                    blackduckProjectVersion = "kit_${blackduckprojectversion}"
+                                    echo "blackduckProjectVersion_release: ${blackduckProjectVersion}"
+                                }
+                                def Map blackduckParams = [
+                                    blackduckProject: "${BlackDuckProjectName}",
+                                    blackduckUrl : "${BlackDuckUrl}",
+                                    blackduckCreds: "${BlackDuckCreds}",
+                                    blackduckProjectVersion: "${blackduckProjectVersion}",
+                                    source: "${BlackduckSource}"
+                                ]
+                                new blackduck().kit(blackduckParams)
+                            }
+                        }
+                    }
+                }
+ 
+                stage('Checkmarx'){
+                    when { expression {checkmarxScan == true}  }
+                    steps {
+                        container('jnlp') {
+                            script {
+                                echo "Checkmarx Scan Started"
+                                def Map checkmarxParams = [
+                                    CheckmarxGroupId : "${CheckmarxGroupId}",
+                                    CheckmarxProjectName : "${CheckmarxProjectName}"
+                                ]
+                                new checkmarx().call(checkmarxParams)
+                            }
+                        }
+                    }
+                }
+ 
+                stage('Sonar'){
+                   when { expression {sonarScan == true}  }
+                    steps {
+                        container('maven') {
+                            script {
+                                echo "Sonarqube Scan Started"
+                                def Map sonarParams = [
+                                    source: "${SonarSource}",
+                                    myBranch: "${GIT_BRANCH}",
+                                    sonarProject: "${SonarProjectName}",
+                                    sonarUrl : "${SonarUrl}",
+                                    sonarCreds: "${SonarQubeCreds}",
+                                    sonarexclusions: "${Sonarexclusions}",
+                                    sonarprojetkey: "${SonarProjectkey}",
+                                    sonarlogin: "${SonarProjectLogin}",
+                                    sonarGitbranch: "${GIT_BRANCH}"
+                                ]
+                                new sonar().kit(sonarParams)
+                            }
+                        }
+                    }
+                }
+               
+                }//end of parallel scan run stages
+ 
+            } */ // end of stages
+       
+       /* stage('Docker Build') {
+            when {
+                allOf{
+                    anyOf {
+                        branch 'develop';
+                        branch 'OCP';
+                        }
+                    expression {dockerbuildinput == true}
+                }
+            }
+            steps{
+                container("occlient"){
+                    script {
+                        echo "Docker Build Started"
+                            try {
+                                dockerbuild.imageBuild(
+                                    image_registry: "${artRepo}",
+                                    branch: "${branchType}",
+                                    appName: repoName,
+                                    namespace: namespace,
+                                    appVersion: "${docker_versionNumber}",
+                                    component: component,
+                                    url: "${ocUrl}",
+                                    occreds: "${ocCreds}"
+                                )
+                            }
+                            catch(e) {
+                                currentBuild.result = "ABORTED"
+                                println "Here is the Error: ${e}"
+                            }
+                        }
+                    }
+                }
+                post {
+                success{
+                    script {
+                        currentBuild.description = "Built Version : ${versionNumber}"
+                    }
+                }
+                failure {
+                    script{
+                        println "Build Failed !! Please review Build Logs"
+                    }
+                }
+            }
+        }*/
+ 
+        // stage('Sysdig Scan') {
+        //     when {
+        //         allOf{
+        //             anyOf {
+        //                 branch 'develop';
+        //                 branch 'release/*';
+        //                 }
+        //             expression {dockerbuildinput == true}
+        //         }
+        //     }
+        //     steps{
+        //         container("jnlp"){
+        //             script {
+        //                 echo "Sysdig scan Started"
+        //                 def Map sysdigParams = [
+        //                     registry: "${artRepo}",
+        //                     imageName: repoName,
+        //                     branch: "${branchType}",
+        //                     imageTag: "${docker_versionNumber}",
+        //                     baseUrl: "${SysdigUrl}",
+        //                     credentialsId: "${SysdigCreds}"
+        //                 ]
+        //                 new sysdig().call(sysdigParams)
+        //             }
+        //         }
+        //     }
+        //     post {
+        //         success{
+        //             script {
+        //                 currentBuild.description = "Built Version : ${versionNumber}"
+        //             }
+        //         }
+        //         failure {
+        //             script{
+        //                 println "Build Failed !! Please review Build Logs"
+        //             }
+        //         }
+        //     }
+        // }
+ 
+        // stage('Publish Helm Chart') {
+        //     when {
+        //         allOf{
+        //             anyOf {
+        //                 branch 'develop';
+        //                 branch 'release/*';
+        //                 }
+        //             expression {helm == true}
+        //         }
+        //     }
+        //     steps{
+        //         container('helm') {
+        //             script {
+        //                 def pom = readMavenPom file: 'pom.xml'
+        //                 versionNumber = pom.version
+        //                 echo "Publish Helm charts Started"
+        //                 sh "helm package charts"
+        //                 sh "ls -lrt"
+        //                 enaArtifactory.uploadArtifact(
+        //                     destinationPath: "${artHelmRepo}/${component}/${component}-${branchType}-${versionNumber}.tgz",
+        //                     artifact: "${component}-${branchType}-${versionNumber}.tgz",
+        //                     credentialsId: "${Bitbucket_id}"
+        //                 )
+        //             }
+        //         }
+        //     }
+        // }
+ 
         }
+   
+        // post {
+        //     always {
+        //         deleteDir()
+        //         script{
+        //             buildNotification {
+        //             //    emailId = notificationEmail
+        //             }
+        //         }  
+        //     }
+        //     success {
+        //         echo "Success"
+        //     }
+        //     unstable {
+        //         echo "Unstable"
+        //     }
+        //     failure {
+        //         echo "Failure"
+        //     }
+        // }
     }
-
-    post {
-        success {
-            // Actions to perform when the pipeline succeeds
-            echo 'Pipeline succeeded!'
-        }
-        failure {
-            // Actions to perform when the pipeline fails
-            echo 'Pipeline failed!'
-        }
-    }
-}
