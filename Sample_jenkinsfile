@@ -1,7 +1,7 @@
 pipeline {
     agent {
         kubernetes {
-            cloud 'kit-api-cicd1'
+            cloud 'mukeshv18-dev'
             yaml '''
         apiversion: v1
         kind: Pod
